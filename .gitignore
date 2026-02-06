@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build / artifacts
+dist/
+artifacts/
+cache/
+typechain-types/
+
+# Environment
+.env
+.env.*
+
+# Hardhat
+.deps/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Indexer
+*.db
+data/

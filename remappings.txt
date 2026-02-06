@@ -1,0 +1,2 @@
+@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/
+@memview-sol/contracts/=node_modules/@summa-tx/memview-sol/contracts/
