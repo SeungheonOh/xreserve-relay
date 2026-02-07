@@ -1,4 +1,5 @@
 import express, { type Request, type Response } from "express";
+import cors from "cors";
 import rateLimit from "express-rate-limit";
 import type { Config } from "./config.js";
 import type { Store } from "./store.js";
@@ -12,6 +13,7 @@ const TX_HASH_REGEX = /^0x[a-fA-F0-9]{64}$/;
 
 export function createApiServer(config: Config, store: Store): express.Express {
   const app = express();
+  app.use(cors());
   app.use(express.json());
 
   app.use(

@@ -34,7 +34,8 @@ const routerAddress = await router.getAddress();
 console.log(`\nXReserveRouter deployed to: ${routerAddress}`);
 
 // ── Verify constructor approval ──
-const usdcContract = await ethers.getContractAt("IERC20", USDC);
+const erc20Abi = ["function allowance(address owner, address spender) view returns (uint256)"];
+const usdcContract = new ethers.Contract(USDC, erc20Abi, ethers.provider);
 const allowance = await usdcContract.allowance(routerAddress, XRESERVE);
 console.log(`USDC allowance (router → xReserve): ${allowance}`);
 
