@@ -24,11 +24,12 @@ function encodeForwardParams(params: {
   remoteDomain: number;
   remoteRecipient: string;
   maxFee: bigint;
+  relayMaxFee: bigint;
   hookData: string;
 }): string {
   return ethers.AbiCoder.defaultAbiCoder().encode(
     [
-      "tuple(address fallbackRecipient, uint32 remoteDomain, bytes32 remoteRecipient, uint256 maxFee, bytes hookData)",
+      "tuple(address fallbackRecipient, uint32 remoteDomain, bytes32 remoteRecipient, uint256 maxFee, uint256 relayMaxFee, bytes hookData)",
     ],
     [params]
   );
@@ -55,9 +56,13 @@ function buildCctpMessage(opts: {
   hookData: string;
   sourceDomain?: number;
   nonce?: string;
+  sender?: string;
+  messageSender?: string;
 }): string {
   const sourceDomain = opts.sourceDomain ?? 3; // Arbitrum domain
   const nonce = opts.nonce ?? ZERO_BYTES32;
+  const sender = opts.sender ?? ZERO_BYTES32;
+  const messageSender = opts.messageSender ?? ZERO_BYTES32;
 
   // ── Outer MessageV2 header ──
   const header = ethers.solidityPacked(
@@ -77,7 +82,7 @@ function buildCctpMessage(opts: {
       sourceDomain,      // sourceDomain
       0,                 // destinationDomain (Ethereum = 0)
       nonce,             // nonce
-      ZERO_BYTES32,      // sender
+      sender,            // sender
       ZERO_BYTES32,      // recipient
       ZERO_BYTES32,      // destinationCaller
       2000,              // minFinalityThreshold (finalized)
@@ -103,7 +108,7 @@ function buildCctpMessage(opts: {
       ZERO_BYTES32,                              // burnToken
       addressToBytes32(opts.mintRecipient),       // mintRecipient
       opts.amount,                               // amount
-      ZERO_BYTES32,                              // messageSender
+      messageSender,                             // messageSender
       opts.cctpMaxFee,                           // maxFee (CCTP)
       opts.feeExecuted,                          // feeExecuted
       0n,                                        // expirationBlock
@@ -175,6 +180,12 @@ describe("XReserveRouter", function () {
     const remoteRecipient = addressToBytes32(
       "0x000000000000000000000000000000000000dEaD"
     );
+    const outerSender = addressToBytes32(
+      "0x0000000000000000000000000000000000001111"
+    );
+    const burnMessageSender = addressToBytes32(
+      "0x0000000000000000000000000000000000002222"
+    );
     const xReserveMaxFee = 100n;
 
     const hookData = encodeForwardParams({
@@ -182,6 +193,7 @@ describe("XReserveRouter", function () {
       remoteDomain,
       remoteRecipient,
       maxFee: xReserveMaxFee,
+      relayMaxFee: 0n,
       hookData: "0x",
     });
 
@@ -191,13 +203,15 @@ describe("XReserveRouter", function () {
       feeExecuted,
       cctpMaxFee: 0n,
       hookData,
+      sender: outerSender,
+      messageSender: burnMessageSender,
     });
 
     const attestation = "0x";
 
-    await expect(router.receiveAndForward(message, attestation))
-      .to.emit(router, "Forwarded")
-      .withArgs(remoteDomain, remoteRecipient, amount);
+    await expect(router.receiveAndForward(message, attestation, 0n))
+      .to.emit(router, "Relayed")
+      .withArgs(3, burnMessageSender, ZERO_BYTES32, amount, 0n);
 
     // Verify xReserve received the correct call
     expect(await xReserve.called()).to.equal(true);
@@ -231,6 +245,7 @@ describe("XReserveRouter", function () {
       remoteDomain,
       remoteRecipient,
       maxFee: 0n,
+      relayMaxFee: 0n,
       hookData: "0x",
     });
 
@@ -242,9 +257,9 @@ describe("XReserveRouter", function () {
       hookData,
     });
 
-    await expect(router.receiveAndForward(message, "0x"))
-      .to.emit(router, "Forwarded")
-      .withArgs(remoteDomain, remoteRecipient, expectedMinted);
+    await expect(router.receiveAndForward(message, "0x", 0n))
+      .to.emit(router, "Relayed")
+      .withArgs(3, ZERO_BYTES32, ZERO_BYTES32, expectedMinted, 0n);
 
     expect(await xReserve.lastValue()).to.equal(expectedMinted);
   });
@@ -270,6 +285,7 @@ describe("XReserveRouter", function () {
         "0x000000000000000000000000000000000000dEaD"
       ),
       maxFee: 0n,
+      relayMaxFee: 0n,
       hookData: "0x",
     });
 
@@ -281,9 +297,9 @@ describe("XReserveRouter", function () {
       hookData,
     });
 
-    await expect(router.receiveAndForward(message, "0x"))
+    await expect(router.receiveAndForward(message, "0x", 0n))
       .to.emit(router, "FallbackTriggered")
-      .withArgs(fallbackAddress, amount);
+      .withArgs(fallbackAddress, amount, 0n);
 
     // Fallback address should have received the USDC
     expect(await usdc.balanceOf(fallbackAddress)).to.equal(amount);
@@ -303,6 +319,7 @@ describe("XReserveRouter", function () {
       remoteDomain: 7,
       remoteRecipient: ZERO_BYTES32,
       maxFee: 0n,
+      relayMaxFee: 0n,
       hookData: "0x",
     });
 
@@ -315,7 +332,7 @@ describe("XReserveRouter", function () {
     });
 
     await expect(
-      router.receiveAndForward(message, "0x")
+      router.receiveAndForward(message, "0x", 0n)
     ).to.be.revertedWith("zero fallback");
   });
 
@@ -331,6 +348,7 @@ describe("XReserveRouter", function () {
       remoteDomain: 7,
       remoteRecipient: ZERO_BYTES32,
       maxFee: 0n,
+      relayMaxFee: 0n,
       hookData: "0x",
     });
 
@@ -343,7 +361,7 @@ describe("XReserveRouter", function () {
     });
 
     await expect(
-      router.receiveAndForward(message, "0x")
+      router.receiveAndForward(message, "0x", 0n)
     ).to.be.revertedWith("invalid mintRecipient");
   });
 
@@ -361,6 +379,7 @@ describe("XReserveRouter", function () {
       remoteDomain: 7,
       remoteRecipient: ZERO_BYTES32,
       maxFee: 0n,
+      relayMaxFee: 0n,
       hookData: "0x",
     });
 
@@ -373,7 +392,7 @@ describe("XReserveRouter", function () {
     });
 
     await expect(
-      router.receiveAndForward(message, "0x")
+      router.receiveAndForward(message, "0x", 0n)
     ).to.be.revertedWith("receive failed");
   });
 
@@ -389,6 +408,7 @@ describe("XReserveRouter", function () {
       remoteDomain: 7,
       remoteRecipient: ZERO_BYTES32,
       maxFee: 0n,
+      relayMaxFee: 0n,
       hookData: "0x",
     });
 
@@ -401,7 +421,7 @@ describe("XReserveRouter", function () {
     });
 
     await expect(
-      router.receiveAndForward(message, "0x")
+      router.receiveAndForward(message, "0x", 0n)
     ).to.be.revertedWith("invalid fee");
   });
 
@@ -424,6 +444,7 @@ describe("XReserveRouter", function () {
       remoteDomain,
       remoteRecipient,
       maxFee: 0n,
+      relayMaxFee: 0n,
       hookData: "0x",
     });
 
@@ -440,18 +461,18 @@ describe("XReserveRouter", function () {
     await transmitter.connect(otherUser).receiveMessage(message, "0x");
     expect(await usdc.balanceOf(await router.getAddress())).to.equal(amount);
 
-    await expect(router.receiveAndForward(message, "0x"))
+    await expect(router.receiveAndForward(message, "0x", 0n))
       .to.emit(router, "RecoveredFromConsumedNonce")
       .withArgs(nonce, amount)
-      .and.to.emit(router, "Forwarded")
-      .withArgs(remoteDomain, remoteRecipient, amount);
+      .and.to.emit(router, "Relayed")
+      .withArgs(3, ZERO_BYTES32, nonce, amount, 0n);
 
     expect(await usdc.balanceOf(await router.getAddress())).to.equal(0n);
     expect(await xReserve.lastValue()).to.equal(amount);
 
     // The same attested message can only be settled once.
     await expect(
-      router.receiveAndForward(message, "0x")
+      router.receiveAndForward(message, "0x", 0n)
     ).to.be.revertedWith("transfer settled");
   });
 
@@ -475,7 +496,7 @@ describe("XReserveRouter", function () {
       nonce,
     });
 
-    await expect(router.receiveAndForward(message, "0x"))
+    await expect(router.receiveAndForward(message, "0x", 0n))
       .to.emit(router, "OperatorRouted")
       .withArgs(
         ethers.solidityPackedKeccak256(["uint32", "bytes32"], [3, nonce]),
@@ -507,7 +528,7 @@ describe("XReserveRouter", function () {
       nonce: uintToBytes32(89),
     });
 
-    await expect(router.receiveAndForward(message, "0x"))
+    await expect(router.receiveAndForward(message, "0x", 0n))
       .to.emit(router, "OperatorRouted")
       .withArgs(
         ethers.solidityPackedKeccak256(
@@ -547,7 +568,7 @@ describe("XReserveRouter", function () {
     // Consume nonce externally and mint to router.
     await transmitter.connect(otherUser).receiveMessage(message, "0x");
 
-    await expect(router.receiveAndForward(message, "0x"))
+    await expect(router.receiveAndForward(message, "0x", 0n))
       .to.emit(router, "RecoveredFromConsumedNonce")
       .withArgs(nonce, amount)
       .and.to.emit(router, "OperatorRouted")
@@ -574,6 +595,7 @@ describe("XReserveRouter", function () {
     const baseParams = {
       fallbackRecipient: await fallbackAddr.getAddress(),
       maxFee: 0n,
+      relayMaxFee: 0n,
       hookData: "0x",
     };
 
@@ -611,9 +633,9 @@ describe("XReserveRouter", function () {
       nonce,
     });
 
-    await router.receiveAndForward(message1, "0x");
+    await router.receiveAndForward(message1, "0x", 0n);
     await expect(
-      router.receiveAndForward(message2, "0x")
+      router.receiveAndForward(message2, "0x", 0n)
     ).to.be.revertedWith("transfer settled");
   });
 
@@ -631,6 +653,7 @@ describe("XReserveRouter", function () {
         "0x000000000000000000000000000000000000dEaD"
       ),
       maxFee: 0n,
+      relayMaxFee: 0n,
       hookData: "0x",
     });
 
@@ -642,7 +665,7 @@ describe("XReserveRouter", function () {
       hookData,
     });
 
-    await router.receiveAndForward(message, "0x");
+    await router.receiveAndForward(message, "0x", 0n);
 
     expect(await xReserve.lastHookData()).to.equal("0x");
   });
@@ -666,6 +689,7 @@ describe("XReserveRouter", function () {
         "0x000000000000000000000000000000000000dEaD"
       ),
       maxFee: 0n,
+      relayMaxFee: 0n,
       hookData: innerHookData,
     });
 
@@ -677,7 +701,7 @@ describe("XReserveRouter", function () {
       hookData,
     });
 
-    await router.receiveAndForward(message, "0x");
+    await router.receiveAndForward(message, "0x", 0n);
 
     expect(await xReserve.lastHookData()).to.equal(
       innerHookData.toLowerCase()
@@ -702,6 +726,7 @@ describe("XReserveRouter", function () {
         "0x0000000000000000000000000000000000000001"
       ),
       maxFee: 0n,
+      relayMaxFee: 0n,
       hookData: "0x",
     });
 
@@ -714,7 +739,7 @@ describe("XReserveRouter", function () {
       nonce: uintToBytes32(11),
     });
 
-    await router.receiveAndForward(message1, "0x");
+    await router.receiveAndForward(message1, "0x", 0n);
     expect(await xReserve.lastValue()).to.equal(5_000_000n);
 
     // Relay 2: 3 USDC with 100 fee
@@ -725,6 +750,7 @@ describe("XReserveRouter", function () {
         "0x0000000000000000000000000000000000000002"
       ),
       maxFee: 50n,
+      relayMaxFee: 0n,
       hookData: "0x",
     });
 
@@ -737,7 +763,7 @@ describe("XReserveRouter", function () {
       nonce: uintToBytes32(12),
     });
 
-    await router.receiveAndForward(message2, "0x");
+    await router.receiveAndForward(message2, "0x", 0n);
     expect(await xReserve.lastValue()).to.equal(3_000_000n - 100n);
     expect(await xReserve.lastRemoteDomain()).to.equal(9);
 
@@ -755,7 +781,7 @@ describe("XReserveRouter", function () {
     const shortMessage = "0x" + "00".repeat(375);
 
     await expect(
-      router.receiveAndForward(shortMessage, "0x")
+      router.receiveAndForward(shortMessage, "0x", 0n)
     ).to.be.revertedWith("message too short");
   });
 
@@ -789,7 +815,189 @@ describe("XReserveRouter", function () {
   });
 
   // ────────────────────────────────────────────────────────────
-  // Test 11: Constructor zero-address guards
+  // Test 11: Relay fee — happy path
+  // ────────────────────────────────────────────────────────────
+  it("should pay relay fee to msg.sender and forward remainder", async function () {
+    const { router, xReserve, usdc, deployer, fallbackAddr } =
+      await networkHelpers.loadFixture(deployFixture);
+
+    const amount = 1_000_000n;
+    const relayMaxFee = 5_000n;
+    const relayFee = 3_000n;
+    const relayerAddress = await deployer.getAddress();
+
+    const hookData = encodeForwardParams({
+      fallbackRecipient: await fallbackAddr.getAddress(),
+      remoteDomain: 7,
+      remoteRecipient: addressToBytes32(
+        "0x000000000000000000000000000000000000dEaD"
+      ),
+      maxFee: 0n,
+      relayMaxFee,
+      hookData: "0x",
+    });
+
+    const message = buildCctpMessage({
+      mintRecipient: await router.getAddress(),
+      amount,
+      feeExecuted: 0n,
+      cctpMaxFee: 0n,
+      hookData,
+    });
+
+    const expectedForward = amount - relayFee;
+
+    await expect(router.receiveAndForward(message, "0x", relayFee))
+      .to.emit(router, "Relayed")
+      .withArgs(3, ZERO_BYTES32, ZERO_BYTES32, expectedForward, relayFee);
+
+    expect(await xReserve.lastValue()).to.equal(expectedForward);
+    expect(await usdc.balanceOf(relayerAddress)).to.equal(relayFee);
+    expect(await usdc.balanceOf(await router.getAddress())).to.equal(0n);
+  });
+
+  // ────────────────────────────────────────────────────────────
+  // Test 12: Relay fee — fallback still pays operator
+  // ────────────────────────────────────────────────────────────
+  it("should pay relay fee even when xReserve reverts (fallback)", async function () {
+    const { router, xReserve, usdc, deployer, fallbackAddr } =
+      await networkHelpers.loadFixture(deployFixture);
+
+    await xReserve.setShouldRevert(true);
+
+    const amount = 2_000_000n;
+    const relayFee = 1_000n;
+    const fallbackAddress = await fallbackAddr.getAddress();
+    const relayerAddress = await deployer.getAddress();
+
+    const hookData = encodeForwardParams({
+      fallbackRecipient: fallbackAddress,
+      remoteDomain: 7,
+      remoteRecipient: addressToBytes32(
+        "0x000000000000000000000000000000000000dEaD"
+      ),
+      maxFee: 0n,
+      relayMaxFee: 10_000n,
+      hookData: "0x",
+    });
+
+    const message = buildCctpMessage({
+      mintRecipient: await router.getAddress(),
+      amount,
+      feeExecuted: 0n,
+      cctpMaxFee: 0n,
+      hookData,
+    });
+
+    const expectedFallback = amount - relayFee;
+
+    await expect(router.receiveAndForward(message, "0x", relayFee))
+      .to.emit(router, "FallbackTriggered")
+      .withArgs(fallbackAddress, expectedFallback, relayFee);
+
+    expect(await usdc.balanceOf(relayerAddress)).to.equal(relayFee);
+    expect(await usdc.balanceOf(fallbackAddress)).to.equal(expectedFallback);
+    expect(await usdc.balanceOf(await router.getAddress())).to.equal(0n);
+  });
+
+  // ────────────────────────────────────────────────────────────
+  // Test 13: Relay fee exceeds relayMaxFee
+  // ────────────────────────────────────────────────────────────
+  it("should revert when relayFee exceeds relayMaxFee", async function () {
+    const { router, fallbackAddr } =
+      await networkHelpers.loadFixture(deployFixture);
+
+    const hookData = encodeForwardParams({
+      fallbackRecipient: await fallbackAddr.getAddress(),
+      remoteDomain: 7,
+      remoteRecipient: ZERO_BYTES32,
+      maxFee: 0n,
+      relayMaxFee: 500n,
+      hookData: "0x",
+    });
+
+    const message = buildCctpMessage({
+      mintRecipient: await router.getAddress(),
+      amount: 1_000_000n,
+      feeExecuted: 0n,
+      cctpMaxFee: 0n,
+      hookData,
+    });
+
+    await expect(
+      router.receiveAndForward(message, "0x", 501n)
+    ).to.be.revertedWith("relay fee exceeds max");
+  });
+
+  // ────────────────────────────────────────────────────────────
+  // Test 14: Relay fee equals minted amount
+  // ────────────────────────────────────────────────────────────
+  it("should revert when relayFee equals minted amount", async function () {
+    const { router, fallbackAddr } =
+      await networkHelpers.loadFixture(deployFixture);
+
+    const amount = 1_000_000n;
+
+    const hookData = encodeForwardParams({
+      fallbackRecipient: await fallbackAddr.getAddress(),
+      remoteDomain: 7,
+      remoteRecipient: ZERO_BYTES32,
+      maxFee: 0n,
+      relayMaxFee: amount,
+      hookData: "0x",
+    });
+
+    const message = buildCctpMessage({
+      mintRecipient: await router.getAddress(),
+      amount,
+      feeExecuted: 0n,
+      cctpMaxFee: 0n,
+      hookData,
+    });
+
+    await expect(
+      router.receiveAndForward(message, "0x", amount)
+    ).to.be.revertedWith("relay fee too high");
+  });
+
+  // ────────────────────────────────────────────────────────────
+  // Test 15: Relay fee of zero (backward compatible)
+  // ────────────────────────────────────────────────────────────
+  it("should forward full amount when relayFee is 0", async function () {
+    const { router, xReserve, usdc, deployer, fallbackAddr } =
+      await networkHelpers.loadFixture(deployFixture);
+
+    const amount = 1_000_000n;
+
+    const hookData = encodeForwardParams({
+      fallbackRecipient: await fallbackAddr.getAddress(),
+      remoteDomain: 7,
+      remoteRecipient: addressToBytes32(
+        "0x000000000000000000000000000000000000dEaD"
+      ),
+      maxFee: 0n,
+      relayMaxFee: 5_000n,
+      hookData: "0x",
+    });
+
+    const message = buildCctpMessage({
+      mintRecipient: await router.getAddress(),
+      amount,
+      feeExecuted: 0n,
+      cctpMaxFee: 0n,
+      hookData,
+    });
+
+    await expect(router.receiveAndForward(message, "0x", 0n))
+      .to.emit(router, "Relayed")
+      .withArgs(3, ZERO_BYTES32, ZERO_BYTES32, amount, 0n);
+
+    expect(await xReserve.lastValue()).to.equal(amount);
+    expect(await usdc.balanceOf(await deployer.getAddress())).to.equal(0n);
+  });
+
+  // ────────────────────────────────────────────────────────────
+  // Test 16: Constructor zero-address guards
   // ────────────────────────────────────────────────────────────
   it("should revert deployment on zero constructor addresses", async function () {
     const { transmitter, xReserve, usdc, deployer } =

@@ -4,19 +4,19 @@
 import type { BaseContract, BigNumberish, BytesLike, FunctionFragment, Result, Interface, EventFragment, AddressLike, ContractRunner, ContractMethod, Listener } from "ethers"
 import type { TypedContractEvent, TypedDeferredTopicFilter, TypedEventLog, TypedLogDescription, TypedListener, TypedContractMethod } from "../common.js"
   
-    export type ForwardParamsStruct = {fallbackRecipient: AddressLike, remoteDomain: BigNumberish, remoteRecipient: BytesLike, maxFee: BigNumberish, hookData: BytesLike}
+    export type ForwardParamsStruct = {fallbackRecipient: AddressLike, remoteDomain: BigNumberish, remoteRecipient: BytesLike, maxFee: BigNumberish, relayMaxFee: BigNumberish, hookData: BytesLike}
 
-    export type ForwardParamsStructOutput = [fallbackRecipient: string, remoteDomain: bigint, remoteRecipient: string, maxFee: bigint, hookData: string] & {fallbackRecipient: string, remoteDomain: bigint, remoteRecipient: string, maxFee: bigint, hookData: string }
+    export type ForwardParamsStructOutput = [fallbackRecipient: string, remoteDomain: bigint, remoteRecipient: string, maxFee: bigint, relayMaxFee: bigint, hookData: string] & {fallbackRecipient: string, remoteDomain: bigint, remoteRecipient: string, maxFee: bigint, relayMaxFee: bigint, hookData: string }
   
 
   export interface XReserveRouterInterface extends Interface {
     getFunction(nameOrSignature: "decodeForwardParams" | "operatorWallet" | "receiveAndForward" | "settledTransfers" | "transmitter" | "usdc" | "xReserve"): FunctionFragment;
 
-    getEvent(nameOrSignatureOrTopic: "FallbackTriggered" | "Forwarded" | "OperatorRouted" | "RecoveredFromConsumedNonce"): EventFragment;
+    getEvent(nameOrSignatureOrTopic: "FallbackTriggered" | "OperatorRouted" | "RecoveredFromConsumedNonce" | "Relayed"): EventFragment;
 
     encodeFunctionData(functionFragment: 'decodeForwardParams', values: [BytesLike]): string;
 encodeFunctionData(functionFragment: 'operatorWallet', values?: undefined): string;
-encodeFunctionData(functionFragment: 'receiveAndForward', values: [BytesLike, BytesLike]): string;
+encodeFunctionData(functionFragment: 'receiveAndForward', values: [BytesLike, BytesLike, BigNumberish]): string;
 encodeFunctionData(functionFragment: 'settledTransfers', values: [BytesLike]): string;
 encodeFunctionData(functionFragment: 'transmitter', values?: undefined): string;
 encodeFunctionData(functionFragment: 'usdc', values?: undefined): string;
@@ -33,21 +33,9 @@ decodeFunctionResult(functionFragment: 'xReserve', data: BytesLike): Result;
 
   
     export namespace FallbackTriggeredEvent {
-      export type InputTuple = [fallbackRecipient: AddressLike, amount: BigNumberish];
-      export type OutputTuple = [fallbackRecipient: string, amount: bigint];
-      export interface OutputObject {fallbackRecipient: string, amount: bigint };
-      export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>
-      export type Filter = TypedDeferredTopicFilter<Event>
-      export type Log = TypedEventLog<Event>
-      export type LogDescription = TypedLogDescription<Event>
-    }
-
-  
-
-    export namespace ForwardedEvent {
-      export type InputTuple = [remoteDomain: BigNumberish, remoteRecipient: BytesLike, amount: BigNumberish];
-      export type OutputTuple = [remoteDomain: bigint, remoteRecipient: string, amount: bigint];
-      export interface OutputObject {remoteDomain: bigint, remoteRecipient: string, amount: bigint };
+      export type InputTuple = [fallbackRecipient: AddressLike, amount: BigNumberish, relayFee: BigNumberish];
+      export type OutputTuple = [fallbackRecipient: string, amount: bigint, relayFee: bigint];
+      export interface OutputObject {fallbackRecipient: string, amount: bigint, relayFee: bigint };
       export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>
       export type Filter = TypedDeferredTopicFilter<Event>
       export type Log = TypedEventLog<Event>
@@ -72,6 +60,18 @@ decodeFunctionResult(functionFragment: 'xReserve', data: BytesLike): Result;
       export type InputTuple = [nonce: BytesLike, amount: BigNumberish];
       export type OutputTuple = [nonce: string, amount: bigint];
       export interface OutputObject {nonce: string, amount: bigint };
+      export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>
+      export type Filter = TypedDeferredTopicFilter<Event>
+      export type Log = TypedEventLog<Event>
+      export type LogDescription = TypedLogDescription<Event>
+    }
+
+  
+
+    export namespace RelayedEvent {
+      export type InputTuple = [sourceDomain: BigNumberish, sourceSender: BytesLike, nonce: BytesLike, amount: BigNumberish, relayFee: BigNumberish];
+      export type OutputTuple = [sourceDomain: bigint, sourceSender: string, nonce: string, amount: bigint, relayFee: bigint];
+      export interface OutputObject {sourceDomain: bigint, sourceSender: string, nonce: string, amount: bigint, relayFee: bigint };
       export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>
       export type Filter = TypedDeferredTopicFilter<Event>
       export type Log = TypedEventLog<Event>
@@ -131,7 +131,7 @@ decodeFunctionResult(functionFragment: 'xReserve', data: BytesLike): Result;
 
     
     receiveAndForward: TypedContractMethod<
-      [message: BytesLike, attestation: BytesLike, ],
+      [message: BytesLike, attestation: BytesLike, relayFee: BigNumberish, ],
       [void],
       'nonpayable'
     >
@@ -183,7 +183,7 @@ getFunction(nameOrSignature: 'operatorWallet'): TypedContractMethod<
       'view'
     >;
 getFunction(nameOrSignature: 'receiveAndForward'): TypedContractMethod<
-      [message: BytesLike, attestation: BytesLike, ],
+      [message: BytesLike, attestation: BytesLike, relayFee: BigNumberish, ],
       [void],
       'nonpayable'
     >;
@@ -209,18 +209,14 @@ getFunction(nameOrSignature: 'xReserve'): TypedContractMethod<
     >;
 
     getEvent(key: 'FallbackTriggered'): TypedContractEvent<FallbackTriggeredEvent.InputTuple, FallbackTriggeredEvent.OutputTuple, FallbackTriggeredEvent.OutputObject>;
-getEvent(key: 'Forwarded'): TypedContractEvent<ForwardedEvent.InputTuple, ForwardedEvent.OutputTuple, ForwardedEvent.OutputObject>;
 getEvent(key: 'OperatorRouted'): TypedContractEvent<OperatorRoutedEvent.InputTuple, OperatorRoutedEvent.OutputTuple, OperatorRoutedEvent.OutputObject>;
 getEvent(key: 'RecoveredFromConsumedNonce'): TypedContractEvent<RecoveredFromConsumedNonceEvent.InputTuple, RecoveredFromConsumedNonceEvent.OutputTuple, RecoveredFromConsumedNonceEvent.OutputObject>;
+getEvent(key: 'Relayed'): TypedContractEvent<RelayedEvent.InputTuple, RelayedEvent.OutputTuple, RelayedEvent.OutputObject>;
 
     filters: {
       
-      'FallbackTriggered(address,uint256)': TypedContractEvent<FallbackTriggeredEvent.InputTuple, FallbackTriggeredEvent.OutputTuple, FallbackTriggeredEvent.OutputObject>;
+      'FallbackTriggered(address,uint256,uint256)': TypedContractEvent<FallbackTriggeredEvent.InputTuple, FallbackTriggeredEvent.OutputTuple, FallbackTriggeredEvent.OutputObject>;
       FallbackTriggered: TypedContractEvent<FallbackTriggeredEvent.InputTuple, FallbackTriggeredEvent.OutputTuple, FallbackTriggeredEvent.OutputObject>;
-    
-
-      'Forwarded(uint32,bytes32,uint256)': TypedContractEvent<ForwardedEvent.InputTuple, ForwardedEvent.OutputTuple, ForwardedEvent.OutputObject>;
-      Forwarded: TypedContractEvent<ForwardedEvent.InputTuple, ForwardedEvent.OutputTuple, ForwardedEvent.OutputObject>;
     
 
       'OperatorRouted(bytes32,bytes32,uint256,uint8)': TypedContractEvent<OperatorRoutedEvent.InputTuple, OperatorRoutedEvent.OutputTuple, OperatorRoutedEvent.OutputObject>;
@@ -229,6 +225,10 @@ getEvent(key: 'RecoveredFromConsumedNonce'): TypedContractEvent<RecoveredFromCon
 
       'RecoveredFromConsumedNonce(bytes32,uint256)': TypedContractEvent<RecoveredFromConsumedNonceEvent.InputTuple, RecoveredFromConsumedNonceEvent.OutputTuple, RecoveredFromConsumedNonceEvent.OutputObject>;
       RecoveredFromConsumedNonce: TypedContractEvent<RecoveredFromConsumedNonceEvent.InputTuple, RecoveredFromConsumedNonceEvent.OutputTuple, RecoveredFromConsumedNonceEvent.OutputObject>;
+    
+
+      'Relayed(uint32,bytes32,bytes32,uint256,uint256)': TypedContractEvent<RelayedEvent.InputTuple, RelayedEvent.OutputTuple, RelayedEvent.OutputObject>;
+      Relayed: TypedContractEvent<RelayedEvent.InputTuple, RelayedEvent.OutputTuple, RelayedEvent.OutputObject>;
     
     };
   }

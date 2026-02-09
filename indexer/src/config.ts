@@ -19,6 +19,8 @@ export interface Config {
   maxRetries: number;
   submitterPollIntervalMs: number;
 
+  relayFee: bigint;
+
   dbPath: string;
 }
 
@@ -66,6 +68,8 @@ export function loadConfig(): Config {
       process.env.SUBMITTER_POLL_INTERVAL_MS ?? "2000",
       10,
     ),
+
+    relayFee: BigInt(process.env.RELAY_FEE ?? "0"),
 
     dbPath: process.env.DB_PATH ?? "./data/relay.db",
   };

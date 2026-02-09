@@ -3,7 +3,7 @@ import type { Config } from "./config.js";
 import type { Store } from "./store.js";
 import {
   ROUTER_ABI,
-  FORWARDED_TOPIC0,
+  RELAYED_TOPIC0,
   FALLBACK_TRIGGERED_TOPIC0,
   RECOVERED_FROM_CONSUMED_NONCE_TOPIC0,
   OPERATOR_ROUTED_TOPIC0,
@@ -35,6 +35,7 @@ export function startSubmitter(config: Config, store: Store): void {
             gasEstimate = await router.receiveAndForward.estimateGas(
               job.attestedMessage,
               job.attestation,
+              config.relayFee,
             );
           } catch (err) {
             throw new Error(
@@ -46,6 +47,7 @@ export function startSubmitter(config: Config, store: Store): void {
           const tx = await router.receiveAndForward(
             job.attestedMessage,
             job.attestation,
+            config.relayFee,
             { gasLimit: (gasEstimate * 120n) / 100n },
           );
 
@@ -68,8 +70,8 @@ export function startSubmitter(config: Config, store: Store): void {
           let outcome: "forwarded" | "fallback" | "operator_routed" | null =
             null;
 
-          const forwardedLog = receipt.logs.find(
-            (log: ethers.Log) => log.topics[0] === FORWARDED_TOPIC0,
+          const relayedLog = receipt.logs.find(
+            (log: ethers.Log) => log.topics[0] === RELAYED_TOPIC0,
           );
           const fallbackLog = receipt.logs.find(
             (log: ethers.Log) =>
@@ -84,7 +86,7 @@ export function startSubmitter(config: Config, store: Store): void {
               log.topics[0] === RECOVERED_FROM_CONSUMED_NONCE_TOPIC0,
           );
 
-          if (forwardedLog) {
+          if (relayedLog) {
             outcome = "forwarded";
           } else if (fallbackLog) {
             outcome = "fallback";

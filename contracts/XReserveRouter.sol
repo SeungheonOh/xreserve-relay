@@ -39,6 +39,7 @@ struct ForwardParams {
     uint32  remoteDomain;      // xReserve domain ID (not a chain ID)
     bytes32 remoteRecipient;   // USDCx recipient on the partner chain
     uint256 maxFee;            // fee budget for xReserve relayer
+    uint256 relayMaxFee;       // max USDC the relay operator may claim
     bytes   hookData;          // optional data for xReserve hook executor
 }
 
@@ -91,6 +92,7 @@ contract XReserveRouter {
     // BurnMessageV2 fields (absolute = MSG_BODY_OFFSET + relative)
     uint256 private constant MINT_RECIPIENT_OFFSET = MSG_BODY_OFFSET + 36; // 184
     uint256 private constant AMOUNT_OFFSET       = MSG_BODY_OFFSET + 68;   // 216
+    uint256 private constant MESSAGE_SENDER_OFFSET = MSG_BODY_OFFSET + 100; // 248
     uint256 private constant FEE_EXECUTED_OFFSET  = MSG_BODY_OFFSET + 164;  // 312
     uint256 private constant HOOK_DATA_OFFSET     = MSG_BODY_OFFSET + 228;  // 376
 
@@ -110,15 +112,18 @@ contract XReserveRouter {
 
     // ── Events ───────────────────────────────────────────────────
 
-    event Forwarded(
-        uint32  indexed remoteDomain,
-        bytes32 indexed remoteRecipient,
-        uint256 amount
+    event Relayed(
+        uint32 indexed sourceDomain,
+        bytes32 indexed sourceSender,
+        bytes32 indexed nonce,
+        uint256 amount,
+        uint256 relayFee
     );
 
     event FallbackTriggered(
         address indexed fallbackRecipient,
-        uint256 amount
+        uint256 amount,
+        uint256 relayFee
     );
 
     event RecoveredFromConsumedNonce(
@@ -161,17 +166,19 @@ contract XReserveRouter {
     /// @notice Mint USDC via CCTP and forward it to xReserve in one tx.
     /// @param message     The full CCTP MessageV2 bytes (header + BurnMessageV2 body).
     /// @param attestation The Circle-attested signature over `message`.
+    /// @param relayFee    USDC fee claimed by the relay operator (must be <= relayMaxFee in ForwardParams).
     function receiveAndForward(
         bytes calldata message,
-        bytes calldata attestation
+        bytes calldata attestation,
+        uint256 relayFee
     ) external {
         // ── 1. Validate minimum length ───────────────────────────
         require(message.length >= MIN_MESSAGE_LENGTH, "message too short");
         bytes32 nonce = _readBytes32(message, NONCE_OFFSET);
+        uint32 sourceDomain = _readUint32(message, SOURCE_DOMAIN_OFFSET);
         bytes32 transferId = bytes32(0);
 
         {
-            uint32 sourceDomain = _readUint32(message, SOURCE_DOMAIN_OFFSET);
             uint32 destinationDomain = _readUint32(message, DESTINATION_DOMAIN_OFFSET);
             require(destinationDomain == ETHEREUM_CCTP_DOMAIN, "invalid destinationDomain");
 
@@ -244,10 +251,12 @@ contract XReserveRouter {
 
         require(mintedAmount > 0, "zero minted amount");
         _settleAndRoute(
+            message,
             transferId,
+            sourceDomain,
             nonce,
             mintedAmount,
-            message[HOOK_DATA_OFFSET:]
+            relayFee
         );
     }
 
@@ -260,11 +269,16 @@ contract XReserveRouter {
     }
 
     function _settleAndRoute(
+        bytes calldata message,
         bytes32 transferId,
+        uint32 sourceDomain,
         bytes32 nonce,
         uint256 mintedAmount,
-        bytes calldata rawHookData
+        uint256 relayFee
     ) private {
+        bytes32 sourceSender = _readBytes32(message, MESSAGE_SENDER_OFFSET);
+        bytes calldata rawHookData = message[HOOK_DATA_OFFSET:];
+
         settledTransfers[transferId] = true;
 
         if (rawHookData.length == 0) {
@@ -279,24 +293,34 @@ contract XReserveRouter {
 
         try this.decodeForwardParams(rawHookData) returns (ForwardParams memory params) {
             require(params.fallbackRecipient != address(0), "zero fallback");
+            require(relayFee <= params.relayMaxFee, "relay fee exceeds max");
+            require(mintedAmount > relayFee, "relay fee too high");
 
-            // ── 4. Forward to xReserve, fallback on failure ──────────
+            // ── 4. Pay relay operator, then forward remainder ────────
+            if (relayFee > 0) {
+                usdc.safeTransfer(msg.sender, relayFee);
+            }
+
+            uint256 forwardAmount = mintedAmount - relayFee;
+
             try xReserve.depositToRemote(
-                mintedAmount,
+                forwardAmount,
                 params.remoteDomain,
                 params.remoteRecipient,
                 address(usdc),
                 params.maxFee,
                 params.hookData
             ) {
-                emit Forwarded(
-                    params.remoteDomain,
-                    params.remoteRecipient,
-                    mintedAmount
+                emit Relayed(
+                    sourceDomain,
+                    sourceSender,
+                    nonce,
+                    forwardAmount,
+                    relayFee
                 );
             } catch {
-                usdc.safeTransfer(params.fallbackRecipient, mintedAmount);
-                emit FallbackTriggered(params.fallbackRecipient, mintedAmount);
+                usdc.safeTransfer(params.fallbackRecipient, forwardAmount);
+                emit FallbackTriggered(params.fallbackRecipient, forwardAmount, relayFee);
             }
         } catch {
             _routeToOperator(
