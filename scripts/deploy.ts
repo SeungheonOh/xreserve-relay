@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { network } from "hardhat";
 
 const { ethers, networkName } = await network.connect();
